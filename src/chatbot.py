@@ -1,9 +1,8 @@
 from langgraph.graph import START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
-
+from src.exception import CustomException
 from src.config import Config
 from src.data_ingestion import ingest_files
-
 from src.file_loader import File
 from typing import List, TypedDict, Iterable
 from enum import Enum
@@ -12,6 +11,7 @@ from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.schema import BaseMessage, Document, AIMessage, HumanMessage
 # from langchain.llms import ChatOllama
 from langchain_ollama import ChatOllama
+import sys
 
 SYSTEM_PROMPT = """
 You're having a conversation with an user about excerpts of their files. Try to be helpful and answer their questions.
@@ -41,7 +41,7 @@ Answer:
 FILE_TEMPLATE="""
 <file>
 <name>{name}</name>
-<context>{context}</context>
+<content>{content}</content>
 </file>
 
 """.strip()
@@ -65,8 +65,10 @@ class Role(Enum):
 
 @dataclass
 class Message:
-    role: str  # Or a Role enum if you have one
+    role: Role 
     content: str
+
+    
 
 @dataclass
 class ChunkEvent:
@@ -108,27 +110,35 @@ class Chatbot:
         self.workflow = self._create_workflow()
 
     def _format_docs(self, docs: List[Document]) -> str:
-        return "\n\n".join(
-            FILE_TEMPLATE.format(name=doc.metadata["source"], content=doc.page_content)
-            for doc in docs
-        )
-
+        try:
+            return "\n\n".join(
+                FILE_TEMPLATE.format(name=doc.metadata["source"], content=doc.page_content)
+                for doc in docs
+            )
         
+        except Exception as e:
+            raise CustomException(e,sys)
 
     def _retrieve(self, state: State):
-        context = self.retriever.invoke(state["question"])
-        return {"context": context}
+        try:
+            context = self.retriever.invoke(state["question"])
+            return {"context": context}
+        except Exception as e:
+            raise CustomException(e,sys)
     
     def _generate(self, state: State):
-        messages = PROMPT_TEMPLATE.invoke(
-            {
-                "question": state["question"],
-                "context": self._format_docs(state["context"]),
-                "chat_history": state["chat_history"],
-            }
-        )
-        answer = self.llm.invoke(messages)
-        return {"answer": answer}
+        try:
+            messages = PROMPT_TEMPLATE.invoke(
+                {
+                    "question": state["question"],
+                    "context": self._format_docs(state["context"]),
+                    "chat_history": state["chat_history"],
+                }
+            )
+            answer = self.llm.invoke(messages)
+            return {"answer": answer}
+        except Exception as e:
+            raise CustomException(e,sys)
 
     def _create_workflow(self) -> CompiledStateGraph:
         graph_builder = StateGraph(State).add_sequence([self._retrieve, self._generate])
@@ -138,40 +148,46 @@ class Chatbot:
     def _ask_model(
         self, prompt: str, chat_history: List[Message]
     ) -> Iterable[SourcesEvent | ChunkEvent | FinalAnswerEvent]:
-        history = [
-            AIMessage(m.content) if m.role == Role.ASSISTANT else HumanMessage(m.content)
-            for m in chat_history
-        ]
-        payload = {"question": prompt, "chat_history": history}
+        try:
+            history = [
+                AIMessage(m.content) if m.role == Role.ASSISTANT else HumanMessage(m.content)
+                for m in chat_history
+            ]
+            payload = {"question": prompt, "chat_history": history}
 
-        config = {
-            "configurable": {"thread_id": 42},
-        }
-        for event_type, event_data in self.workflow.stream(
-            payload,
-            config=config,
-            stream_mode=["updates", "messages"],
-        ):
-            if event_type == "messages":
-                chunk, _ = event_data
-                yield ChunkEvent(chunk.content)
+            config = {
+                "configurable": {"thread_id": 42},
+            }
+            for event_type, event_data in self.workflow.stream(
+                payload,
+                config=config,
+                stream_mode=["updates", "messages"],
+            ):
+                if event_type == "messages":
+                    chunk, _ = event_data
+                    yield ChunkEvent(chunk.content)
 
-            if event_type == "updates":
-                if "_retrieve" in event_data:
-                    documents = event_data["_retrieve"]["context"]
-                    yield SourcesEvent(documents)
+                if event_type == "updates":
+                    if "_retrieve" in event_data:
+                        documents = event_data["_retrieve"]["context"]
+                        yield SourcesEvent(documents)
 
-                if "_generate" in event_data:
-                    answer = event_data["_generate"]["answer"]
-                    yield FinalAnswerEvent(answer.content)
+                    if "_generate" in event_data:
+                        answer = event_data["_generate"]["answer"]
+                        yield FinalAnswerEvent(answer.content)
+        except Exception as e:
+            raise CustomException(e,sys)
                 
 
     def ask(
         self, prompt: str, chat_history: List[Message]
     ) -> Iterable[SourcesEvent | ChunkEvent | FinalAnswerEvent]:
-        for event in self._ask_model(prompt, chat_history):
-            yield event
-            if isinstance(event, FinalAnswerEvent):
-                response = _remove_thinking_from_message("".join(event.content))
-                chat_history.append(Message(role=Role.USER, content=prompt))
-                chat_history.append(Message(role=Role.ASSISTANT, content=response))
+        try:
+            for event in self._ask_model(prompt, chat_history):
+                yield event
+                if isinstance(event, FinalAnswerEvent):
+                    response = _remove_thinking_from_message("".join(event.content))
+                    chat_history.append(Message(role=Role.USER, content=prompt))
+                    chat_history.append(Message(role=Role.ASSISTANT, content=response))
+        except Exception as e:
+            raise CustomException(e,sys)

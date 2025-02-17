@@ -1,9 +1,9 @@
 import random
 from typing import List
-
+from src.exception import CustomException
 import streamlit as st
 from streamlit.runtime.uploaded_file_manager import UploadedFile
-
+import sys
 from src.chatbot import Chatbot, ChunkEvent, Message, Role, SourcesEvent, create_history
 from src.file_loader import load_uploaded_file
 
@@ -78,21 +78,24 @@ for message in st.session_state.messages:
         st.markdown(message.content)
 
 if prompt := st.chat_input("Type your message..."):
-    with st.chat_message("user", avatar="🐧"):
-        st.markdown(prompt)
-    
-    with st.chat_message("assistant", avatar="🤖"):
-        full_response = ""
-        message_placeholder = st.empty()
-        message_placeholder.status(random.choice(LOADING_MESSAGES), state="running")
+    try:
+        with st.chat_message("user", avatar="🐧"):
+            st.markdown(prompt)
+        
+        with st.chat_message("assistant", avatar="🤖"):
+            full_response = ""
+            message_placeholder = st.empty()
+            message_placeholder.status(random.choice(LOADING_MESSAGES), state="running")
 
-        for event in chatbot.ask(prompt, st.session_state.messages):
-            if isinstance(event, SourcesEvent):
-                for i, doc in enumerate(event.content):
-                    with st.expander(f"Source #{i + 1}"):
-                        st.markdown(doc.page_content)
+            for event in chatbot.ask(prompt, st.session_state.messages):
+                if isinstance(event, SourcesEvent):
+                    for i, doc in enumerate(event.content):
+                        with st.expander(f"Source #{i + 1}"):
+                            st.markdown(doc.page_content)
 
-            if isinstance(event, ChunkEvent):
-                chunk = event.content
-                full_response += chunk
-                message_placeholder.markdown(full_response)
+                if isinstance(event, ChunkEvent):
+                    chunk = event.content
+                    full_response += chunk
+                    message_placeholder.markdown(full_response)
+    except Exception as e:
+        raise CustomException(e,sys)
